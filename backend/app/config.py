@@ -2,7 +2,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
     app_name: str = "Executive Assistant"
     database_url: str = "sqlite:///./assistant.db"
@@ -33,9 +37,6 @@ class Settings(BaseSettings):
     enable_live_execution: bool = False
     require_approval_for_live: bool = True
     enable_real_broker: bool = False
-
-    class Config:
-        case_sensitive = False
 
 
 settings = Settings()
