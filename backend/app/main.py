@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 from app.schemas import AlertCreateRequest, DraftCreateRequest, PortfolioCreateRequest, PortfolioThresholdRequest, TradeRequest
@@ -39,6 +40,13 @@ google_auth_service = GoogleAuthService()
 briefing_email_service = BriefingEmailService(google_auth_service)
 
 app = FastAPI(title="Executive Assistant")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
