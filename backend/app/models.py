@@ -33,7 +33,7 @@ class Task(Base):
     source = Column(String, default="manual")
     due_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata = Column(JSON, default={})
+    task_metadata = Column("metadata", JSON, default={})
     completed_at = Column(DateTime, nullable=True)
 
 
