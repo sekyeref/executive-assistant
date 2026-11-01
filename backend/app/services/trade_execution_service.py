@@ -15,8 +15,21 @@ class TradeExecutionService:
         self.portfolio_service = portfolio_service
 
     async def execute_trade(self, user_id: str, portfolio_id: int, symbol: str, side: str, quantity: float,
-                           execution_mode: str = "paper", approved: bool = False, notes: str = "",
-                           order_type: str = "market", limit_price: Optional[float] = None) -> Dict[str, Any]:
+                            execution_mode: str = "paper", approved: bool = False, notes: str = "",
+                            order_type: str = "market", limit_price: Optional[float] = None) -> Dict[str, Any]:
+        normalized_symbol = (symbol or "").strip()
+        normalized_side = (side or "").strip().lower()
+        normalized_quantity = float(quantity or 0.0)
+
+        if not normalized_symbol:
+            return {"status": "blocked", "reason": "Symbol is required.", "execution_mode": execution_mode}
+
+        if normalized_side not in {"buy", "sell"}:
+            return {"status": "blocked", "reason": "Side must be 'buy' or 'sell'.", "execution_mode": execution_mode}
+
+        if normalized_quantity <= 0:
+            return {"status": "blocked", "reason": "Quantity must be greater than zero.", "execution_mode": execution_mode}
+
         allowed = self.broker_service.can_execute(execution_mode, approved)
         if not allowed:
             return {
@@ -34,9 +47,9 @@ class TradeExecutionService:
             }
 
         result = await self.broker_service.place_order(
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
+            symbol=normalized_symbol,
+            side=normalized_side,
+            quantity=normalized_quantity,
             execution_mode=execution_mode,
             approved=approved,
             order_type=order_type,
@@ -47,9 +60,9 @@ class TradeExecutionService:
         db.add(TradeAuditLog(
             user_id=user_id,
             portfolio_id=portfolio_id,
-            symbol=symbol.upper(),
-            side=side.lower(),
-            quantity=quantity,
+            symbol=normalized_symbol.upper(),
+            side=normalized_side,
+            quantity=normalized_quantity,
             execution_mode=execution_mode,
             approved=approved,
             status=result.get("status", "pending"),
@@ -62,9 +75,9 @@ class TradeExecutionService:
             tx = self.portfolio_service.add_trade_record(
                 user_id=user_id,
                 portfolio_id=portfolio_id,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
+                symbol=normalized_symbol,
+                side=normalized_side,
+                quantity=normalized_quantity,
                 price=result.get("limit_price") or 0.0,
                 execution_mode=execution_mode,
                 status="approved" if execution_mode == "paper" else "pending",
