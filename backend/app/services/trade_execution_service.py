@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 from app.config import settings
@@ -17,21 +18,21 @@ class TradeExecutionService:
     async def execute_trade(self, user_id: str, portfolio_id: int, symbol: str, side: str, quantity: float,
                             execution_mode: str = "paper", approved: bool = False, notes: str = "",
                             order_type: str = "market", limit_price: Optional[float] = None) -> Dict[str, Any]:
-        normalized_symbol = (symbol or "").strip()
+        normalized_symbol = (symbol or "").strip().upper()
         normalized_side = (side or "").strip().lower()
-        normalized_quantity = float(quantity or 0.0)
+        try:
+            normalized_quantity = float(quantity)
+        except (TypeError, ValueError):
+            normalized_quantity = 0.0
 
         if not normalized_symbol:
             return {"status": "blocked", "reason": "Symbol is required.", "execution_mode": execution_mode}
-
         if normalized_side not in {"buy", "sell"}:
             return {"status": "blocked", "reason": "Side must be 'buy' or 'sell'.", "execution_mode": execution_mode}
+        if not math.isfinite(normalized_quantity) or normalized_quantity <= 0:
+            return {"status": "blocked", "reason": "Quantity must be a finite number greater than zero.", "execution_mode": execution_mode}
 
-        if normalized_quantity <= 0:
-            return {"status": "blocked", "reason": "Quantity must be greater than zero.", "execution_mode": execution_mode}
-
-        allowed = self.broker_service.can_execute(execution_mode, approved)
-        if not allowed:
+        if not self.broker_service.can_execute(execution_mode, approved):
             return {
                 "status": "blocked",
                 "reason": "Execution denied by guardrails.",
@@ -39,7 +40,14 @@ class TradeExecutionService:
                 "manual_confirmation_required": settings.require_manual_confirmation,
             }
 
-        if float(quantity) * float(limit_price or 0.0) > settings.max_trade_value and execution_mode == "live":
+        effective_price = limit_price
+        if execution_mode == "paper":
+            if effective_price is None or effective_price <= 0:
+                quote = await self.portfolio_service.market_data_service.get_quote(normalized_symbol)
+                effective_price = float(quote["price"])
+            if not math.isfinite(effective_price) or effective_price <= 0:
+                return {"status": "blocked", "reason": "Could not determine a valid paper-trade price.", "execution_mode": execution_mode}
+        elif limit_price is not None and quantity * limit_price > settings.max_trade_value:
             return {
                 "status": "blocked",
                 "reason": "Trade exceeds configured max trade value.",
@@ -53,43 +61,70 @@ class TradeExecutionService:
             execution_mode=execution_mode,
             approved=approved,
             order_type=order_type,
-            limit_price=limit_price,
+            limit_price=effective_price,
         )
+        if result.get("status") != "accepted":
+            self._write_audit(user_id, portfolio_id, normalized_symbol, normalized_side, normalized_quantity,
+                              execution_mode, approved, result.get("status", "blocked"), result.get("reason", ""))
+            return result
 
+        try:
+            if execution_mode == "paper":
+                tx = self.portfolio_service.apply_paper_trade(
+                    user_id=user_id,
+                    portfolio_id=portfolio_id,
+                    symbol=normalized_symbol,
+                    side=normalized_side,
+                    quantity=normalized_quantity,
+                    price=float(effective_price),
+                    approved=approved,
+                    notes=notes,
+                )
+            else:
+                tx = self.portfolio_service.add_trade_record(
+                    user_id=user_id,
+                    portfolio_id=portfolio_id,
+                    symbol=normalized_symbol,
+                    side=normalized_side,
+                    quantity=normalized_quantity,
+                    price=float(effective_price or 0.0),
+                    execution_mode=execution_mode,
+                    status="pending",
+                    approved=approved,
+                    notes=notes,
+                )
+        except ValueError as exc:
+            self._write_audit(user_id, portfolio_id, normalized_symbol, normalized_side, normalized_quantity,
+                              execution_mode, approved, "blocked", str(exc))
+            return {"status": "blocked", "reason": str(exc), "execution_mode": execution_mode}
+
+        self._write_audit(user_id, portfolio_id, normalized_symbol, normalized_side, normalized_quantity,
+                          execution_mode, approved, "accepted", "")
+        return {
+            "status": "ok",
+            "execution_mode": execution_mode,
+            "trade_id": tx.id,
+            "price": float(effective_price or 0.0),
+            "broker": result.get("broker", "simulated"),
+            "details": result,
+        }
+
+    @staticmethod
+    def _write_audit(user_id: str, portfolio_id: int, symbol: str, side: str, quantity: float,
+                     execution_mode: str, approved: bool, status: str, reason: str) -> None:
         db = SessionLocal()
-        db.add(TradeAuditLog(
-            user_id=user_id,
-            portfolio_id=portfolio_id,
-            symbol=normalized_symbol.upper(),
-            side=normalized_side,
-            quantity=normalized_quantity,
-            execution_mode=execution_mode,
-            approved=approved,
-            status=result.get("status", "pending"),
-            reason=result.get("reason", ""),
-        ))
-        db.commit()
-        db.close()
-
-        if result.get("status") == "accepted":
-            tx = self.portfolio_service.add_trade_record(
+        try:
+            db.add(TradeAuditLog(
                 user_id=user_id,
                 portfolio_id=portfolio_id,
-                symbol=normalized_symbol,
-                side=normalized_side,
-                quantity=normalized_quantity,
-                price=result.get("limit_price") or 0.0,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
                 execution_mode=execution_mode,
-                status="approved" if execution_mode == "paper" else "pending",
                 approved=approved,
-                notes=notes,
-            )
-            return {
-                "status": "ok",
-                "execution_mode": execution_mode,
-                "trade_id": tx.id,
-                "broker": result.get("broker", "simulated"),
-                "details": result,
-            }
-
-        return result
+                status=status,
+                reason=reason,
+            ))
+            db.commit()
+        finally:
+            db.close()

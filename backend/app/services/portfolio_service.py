@@ -38,7 +38,7 @@ class PortfolioService:
     def list_portfolios(self, user_id: str) -> List[Portfolio]:
         db = self._get_db()
         try:
-            return db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
+            return db.query(Portfolio).filter(Portfolio.user_id == user_id).order_by(Portfolio.id.asc()).all()
         finally:
             db.close()
 
@@ -77,6 +77,90 @@ class PortfolioService:
         finally:
             db.close()
 
+    def apply_paper_trade(self, user_id: str, portfolio_id: int, symbol: str, side: str, quantity: float,
+                          price: float, approved: bool = True, notes: str = "") -> TradeTransaction:
+        """Atomically record a simulated fill and update the portfolio's cash and position."""
+        normalized_symbol = symbol.strip().upper()
+        normalized_side = side.strip().lower()
+        if not normalized_symbol or normalized_side not in {"buy", "sell"}:
+            raise ValueError("A valid symbol and trade side are required.")
+        if quantity <= 0 or price <= 0:
+            raise ValueError("Quantity and execution price must be greater than zero.")
+
+        db = self._get_db()
+        try:
+            portfolio = db.query(Portfolio).filter(
+                Portfolio.id == portfolio_id,
+                Portfolio.user_id == user_id,
+            ).with_for_update().first()
+            if portfolio is None:
+                raise ValueError("Portfolio not found for this user.")
+
+            position = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.portfolio_id == portfolio_id,
+                Position.symbol == normalized_symbol,
+            ).with_for_update().first()
+            current_quantity = float(position.quantity or 0.0) if position else 0.0
+            notional = quantity * price
+
+            if normalized_side == "buy":
+                cash = float(portfolio.cash or 0.0)
+                if notional > cash:
+                    raise ValueError(f"Insufficient cash: trade costs ${notional:.2f}, available cash is ${cash:.2f}.")
+                new_quantity = current_quantity + quantity
+                old_cost = float(position.average_cost or 0.0) * current_quantity if position else 0.0
+                average_cost = (old_cost + notional) / new_quantity
+                portfolio.cash = cash - notional
+                if position:
+                    position.quantity = new_quantity
+                    position.average_cost = average_cost
+                    position.market_price = price
+                    position.updated_at = datetime.utcnow()
+                else:
+                    position = Position(
+                        user_id=user_id,
+                        portfolio_id=portfolio_id,
+                        symbol=normalized_symbol,
+                        quantity=new_quantity,
+                        average_cost=average_cost,
+                        market_price=price,
+                    )
+                    db.add(position)
+            else:
+                if position is None or quantity > current_quantity:
+                    raise ValueError("Insufficient position quantity to sell.")
+                new_quantity = current_quantity - quantity
+                portfolio.cash = float(portfolio.cash or 0.0) + notional
+                position.quantity = new_quantity
+                position.market_price = price
+                position.updated_at = datetime.utcnow()
+                if new_quantity == 0:
+                    position.average_cost = 0.0
+
+            tx = TradeTransaction(
+                user_id=user_id,
+                portfolio_id=portfolio_id,
+                symbol=normalized_symbol,
+                side=normalized_side,
+                quantity=quantity,
+                price=price,
+                execution_mode="paper",
+                status="approved",
+                approved=approved,
+                manual_confirmation_required=False,
+                notes=notes,
+            )
+            db.add(tx)
+            db.commit()
+            db.refresh(tx)
+            return tx
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
     def upsert_position(self, user_id: str, portfolio_id: int, symbol: str, quantity: float, average_cost: float,
                         market_price: float):
         db = self._get_db()
@@ -86,7 +170,6 @@ class PortfolioService:
                 Position.portfolio_id == portfolio_id,
                 Position.symbol == symbol.upper(),
             ).first()
-
             if existing:
                 existing.quantity = quantity
                 existing.average_cost = average_cost
@@ -116,16 +199,25 @@ class PortfolioService:
             db.close()
 
     async def compute_portfolio_summary(self, user_id: str, portfolio_id: int) -> Dict[str, object]:
-        portfolio = self.get_portfolio(portfolio_id)
-        positions = self.get_positions(user_id, portfolio_id)
+        db = self._get_db()
+        try:
+            portfolio = db.query(Portfolio).filter(
+                Portfolio.id == portfolio_id,
+                Portfolio.user_id == user_id,
+            ).first()
+            positions = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.portfolio_id == portfolio_id,
+            ).all()
+            if not portfolio:
+                return {"portfolio_id": None, "total_value": 0.0, "cash": 0.0, "positions": []}
+            cash = float(portfolio.cash or 0.0)
+        finally:
+            db.close()
 
-        if not portfolio:
-            return {"total_value": 0.0, "cash": 0.0, "positions": []}
-
-        total_value = float(portfolio.cash or 0.0)
+        total_value = cash
         symbol_list = [position.symbol for position in positions]
         quote_map = {}
-
         if symbol_list:
             quotes = await self.market_data_service.get_quotes(symbol_list)
             quote_map = {item["symbol"]: item for item in quotes}
@@ -136,7 +228,6 @@ class PortfolioService:
             price = float(quote.get("price", position.market_price or 0.0))
             market_value = position.quantity * price
             total_value += market_value
-
             rows.append({
                 "symbol": position.symbol,
                 "quantity": position.quantity,
@@ -149,7 +240,7 @@ class PortfolioService:
         return {
             "portfolio_id": portfolio_id,
             "portfolio_name": portfolio.name,
-            "cash": float(portfolio.cash or 0.0),
+            "cash": cash,
             "total_value": round(total_value, 2),
             "positions": rows,
         }

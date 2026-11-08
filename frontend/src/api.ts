@@ -9,7 +9,8 @@ export async function fetchJson<T>(url: string, options?: RequestInit): Promise<
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    const detail = await response.text();
+    throw new Error(detail || `Request failed: ${response.status}`);
   }
 
   return response.json() as Promise<T>;
@@ -17,6 +18,12 @@ export async function fetchJson<T>(url: string, options?: RequestInit): Promise<
 
 export async function getMarketSnapshot() {
   return fetchJson<any>("/api/market/snapshot");
+}
+
+export async function getPortfolios(userId: string) {
+  return fetchJson<{ portfolios: Array<{ id: number; name: string }> }>(
+    `/api/portfolios?user_id=${encodeURIComponent(userId)}`
+  );
 }
 
 export async function getPortfolioSummary(userId: string, portfolioId: number) {
@@ -40,11 +47,7 @@ export async function getRebalanceSummary(userId: string, portfolioId: number) {
 export async function createPortfolio(userId: string, name: string, cash: number) {
   return fetchJson<any>("/api/portfolio", {
     method: "POST",
-    body: JSON.stringify({
-      user_id: userId,
-      name,
-      cash,
-    }),
+    body: JSON.stringify({ user_id: userId, name, cash }),
   });
 }
 
