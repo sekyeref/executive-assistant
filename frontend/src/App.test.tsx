@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import * as api from "./api";
 
@@ -14,6 +14,10 @@ vi.mock("./api", () => ({
 }));
 
 const mocks = vi.mocked(api);
+
+afterEach(() => {
+  cleanup();
+});
 
 beforeEach(() => {
   mocks.getMarketSnapshot.mockResolvedValue({ items: [{ symbol: "BTC-USD", price: 60000, change: 100, change_percent: 0.17 }] });
