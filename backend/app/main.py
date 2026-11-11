@@ -106,12 +106,18 @@ def list_portfolios(user_id: str = Query(...)):
 
 
 @app.get("/api/portfolio")
-async def portfolio_summary(user_id: str = Query(...), portfolio_id: int = Query(...)):
+async def portfolio_summary(user_id: str = Query(...), portfolio_id: int = Query(..., gt=0)):
+    portfolio = portfolio_service.get_portfolio(portfolio_id)
+    if portfolio is None or portfolio.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
     return await portfolio_service.compute_portfolio_summary(user_id, portfolio_id)
 
 
 @app.get("/api/trades")
-def trades(user_id: str = Query(...), portfolio_id: int = Query(...)):
+def trades(user_id: str = Query(...), portfolio_id: int = Query(..., gt=0)):
+    portfolio = portfolio_service.get_portfolio(portfolio_id)
+    if portfolio is None or portfolio.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
     txs = portfolio_service.list_transactions(user_id, portfolio_id)
     return {"transactions": [item.__dict__ for item in txs]}
 
@@ -134,12 +140,15 @@ async def execute_trade(payload: TradeRequest):
 
 
 @app.get("/api/risk/monte-carlo")
-async def monte_carlo_risk(user_id: str = Query(...), portfolio_id: int = Query(...), scenarios: int = 2000):
+async def monte_carlo_risk(user_id: str = Query(...), portfolio_id: int = Query(..., gt=0), scenarios: int = Query(default=2000, ge=100, le=10000)):
     return await risk_service.simulate_portfolio(user_id, portfolio_id, scenarios=scenarios)
 
 
 @app.post("/api/rebalance/threshold")
 def set_threshold(payload: PortfolioThresholdRequest):
+    portfolio = portfolio_service.get_portfolio(payload.portfolio_id)
+    if portfolio is None or portfolio.user_id != payload.user_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
     threshold = rebalance_service.set_threshold(
         user_id=payload.user_id,
         portfolio_id=payload.portfolio_id,
@@ -152,7 +161,10 @@ def set_threshold(payload: PortfolioThresholdRequest):
 
 
 @app.get("/api/rebalance/evaluate")
-async def evaluate_rebalance(user_id: str = Query(...), portfolio_id: int = Query(...)):
+async def evaluate_rebalance(user_id: str = Query(...), portfolio_id: int = Query(..., gt=0)):
+    portfolio = portfolio_service.get_portfolio(portfolio_id)
+    if portfolio is None or portfolio.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
     return await rebalance_service.evaluate_rebalance(user_id, portfolio_id)
 
 
@@ -218,12 +230,18 @@ def list_drafts(user_id: str = Query(...)):
 
 
 @app.get("/api/nightly-brief")
-async def nightly_brief(user_id: str = Query(...), portfolio_id: int = Query(...)):
+async def nightly_brief(user_id: str = Query(...), portfolio_id: int = Query(..., gt=0)):
+    portfolio = portfolio_service.get_portfolio(portfolio_id)
+    if portfolio is None or portfolio.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
     return await nightly_briefing_service.build_nightly_brief(user_id, portfolio_id)
 
 
 @app.post("/api/nightly-brief/send")
-async def send_nightly_brief(user_id: str = Query(...), portfolio_id: int = Query(...), recipient: str = Query("you@example.com")):
+async def send_nightly_brief(user_id: str = Query(...), portfolio_id: int = Query(..., gt=0), recipient: str = Query("you@example.com", min_length=3, max_length=320)):
+    portfolio = portfolio_service.get_portfolio(portfolio_id)
+    if portfolio is None or portfolio.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
     brief = await nightly_briefing_service.build_nightly_brief(user_id, portfolio_id)
     email_result = briefing_email_service.send_brief_email(user_id, recipient, brief)
     return {"brief": brief, "email_result": email_result}
