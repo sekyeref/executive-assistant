@@ -35,7 +35,7 @@ gmail_service = GmailService()
 calendar_service = CalendarService()
 draft_service = DraftService()
 email_drafting_service = EmailDraftingService()
-nightly_briefing_service = NightlyBriefingService()
+nightly_briefing_service = NightlyBriefingService(portfolio_service, market_data_service)
 google_auth_service = GoogleAuthService()
 briefing_email_service = BriefingEmailService(google_auth_service)
 
