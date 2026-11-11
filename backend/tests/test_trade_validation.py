@@ -78,6 +78,31 @@ class TradeExecutionOwnershipTests(unittest.IsolatedAsyncioTestCase):
         portfolios.get_portfolio.assert_not_called()
         broker.can_execute.assert_not_called()
 
+    async def test_never_routes_live_requests_to_simulated_broker(self):
+        service, broker, portfolios = self.make_service(SimpleNamespace(user_id="demo-user"))
+        result = await service.execute_trade("demo-user", 1, "BTC-USD", "buy", 0.1, execution_mode="live", approved=True, limit_price=10)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("simulated", result["reason"])
+        broker.can_execute.assert_not_called()
+        broker.place_order.assert_not_awaited()
+        portfolios.get_portfolio.assert_not_called()
+
+    async def test_rejects_unknown_order_type_before_portfolio_or_broker(self):
+        service, broker, portfolios = self.make_service(SimpleNamespace(user_id="demo-user"))
+        result = await service.execute_trade("demo-user", 1, "BTC-USD", "buy", 0.1, order_type="stop")
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("Order type", result["reason"])
+        portfolios.get_portfolio.assert_not_called()
+        broker.can_execute.assert_not_called()
+
+    async def test_requires_price_for_limit_order(self):
+        service, broker, portfolios = self.make_service(SimpleNamespace(user_id="demo-user"))
+        result = await service.execute_trade("demo-user", 1, "BTC-USD", "buy", 0.1, order_type="limit")
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("price is required", result["reason"])
+        portfolios.get_portfolio.assert_not_called()
+        broker.can_execute.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
