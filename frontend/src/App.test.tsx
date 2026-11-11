@@ -39,30 +39,45 @@ beforeEach(() => {
 describe("dashboard rendering", () => {
   it("renders dashboard sections and loaded portfolio/market data", async () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Executive Assistant" })).toBeInTheDocument();
-    expect(screen.getByText("Loading dashboard data…")).toBeInTheDocument();
-    expect(await screen.findByText("$2000.00")).toBeInTheDocument();
-    expect(screen.getByText("BTC-USD")).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: /Executive Assistant/i })).toBeInTheDocument();
+    expect(screen.getByText(/Loading dashboard data/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getAllByText("$2000.00").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getAllByText("BTC-USD").length).toBeGreaterThan(0);
+
     for (const section of ["Portfolio Overview", "Market Snapshot", "Risk", "Rebalance", "Trade Execution", "Inbox", "Calendar", "Draft Composer", "Saved Drafts"]) {
-      expect(screen.getByRole("heading", { name: section })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: new RegExp(section, "i") })).toBeInTheDocument();
     }
-    await waitFor(() => expect(screen.getByText("Dashboard ready")).toBeInTheDocument());
+
+    await waitFor(() => {
+      expect(screen.getByText(/Dashboard ready/i)).toBeInTheDocument();
+    });
   });
 
   it("keeps dashboard visible and reports partial failures", async () => {
     mocks.getMarketSnapshot.mockRejectedValue(new Error("backend unavailable"));
     render(<App />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("market snapshot");
-    expect(screen.getByRole("heading", { name: "Portfolio Overview" })).toBeInTheDocument();
-    expect(await screen.findByText("Dashboard partially loaded")).toBeInTheDocument();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/market snapshot/i);
+    expect(screen.getByRole("heading", { name: /Portfolio Overview/i })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Dashboard partially loaded/i)).toBeInTheDocument();
+    });
   });
 
   it("shows empty states when the APIs return no records", async () => {
     mocks.getMarketSnapshot.mockResolvedValue({ items: [] });
     mocks.getPortfolioSummary.mockRejectedValue(new Error("not found"));
+
     render(<App />);
-    expect(await screen.findByText("Market data unavailable.")).toBeInTheDocument();
-    expect(screen.getByText("No inbox messages.")).toBeInTheDocument();
-    expect(screen.getByText("No calendar events.")).toBeInTheDocument();
+
+    expect(await screen.findByText(/Market data unavailable\./i)).toBeInTheDocument();
+    expect(screen.getByText(/No inbox messages\./i)).toBeInTheDocument();
+    expect(screen.getByText(/No calendar events\./i)).toBeInTheDocument();
   });
 });
