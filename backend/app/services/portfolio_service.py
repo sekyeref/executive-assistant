@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -74,6 +75,96 @@ class PortfolioService:
             db.commit()
             db.refresh(tx)
             return tx
+        finally:
+            db.close()
+
+    def apply_paper_trade(self, user_id: str, portfolio_id: int, symbol: str, side: str,
+                          quantity: float, price: float, approved: bool = False,
+                          notes: str = "") -> TradeTransaction:
+        """Atomically update paper-trade cash, position, and transaction history."""
+        if not math.isfinite(quantity) or quantity <= 0:
+            raise ValueError("Quantity must be a finite number greater than zero.")
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("Execution price must be a finite number greater than zero.")
+
+        symbol = symbol.upper()
+        side = side.lower()
+        if side not in {"buy", "sell"}:
+            raise ValueError("Side must be 'buy' or 'sell'.")
+
+        db = self._get_db()
+        try:
+            portfolio = db.query(Portfolio).filter(
+                Portfolio.id == portfolio_id,
+                Portfolio.user_id == user_id,
+            ).with_for_update().first()
+            if portfolio is None:
+                raise ValueError("Portfolio not found for this user.")
+
+            position = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.portfolio_id == portfolio_id,
+                Position.symbol == symbol,
+            ).with_for_update().first()
+
+            notional = quantity * price
+            if side == "buy":
+                cash = float(portfolio.cash or 0.0)
+                if notional > cash + 1e-9:
+                    raise ValueError("Insufficient cash for this paper trade.")
+                old_quantity = float(position.quantity or 0.0) if position else 0.0
+                old_cost = float(position.average_cost or 0.0) if position else 0.0
+                new_quantity = old_quantity + quantity
+                new_average_cost = ((old_quantity * old_cost) + notional) / new_quantity
+                portfolio.cash = max(0.0, cash - notional)
+                if position:
+                    position.quantity = new_quantity
+                    position.average_cost = new_average_cost
+                    position.market_price = price
+                    position.updated_at = datetime.utcnow()
+                else:
+                    position = Position(
+                        user_id=user_id,
+                        portfolio_id=portfolio_id,
+                        symbol=symbol,
+                        quantity=quantity,
+                        average_cost=price,
+                        market_price=price,
+                    )
+                    db.add(position)
+            else:
+                held_quantity = float(position.quantity or 0.0) if position else 0.0
+                if quantity > held_quantity + 1e-12:
+                    raise ValueError("Insufficient holdings for this paper trade.")
+                portfolio.cash = float(portfolio.cash or 0.0) + notional
+                remaining = held_quantity - quantity
+                if remaining <= 1e-12:
+                    db.delete(position)
+                else:
+                    position.quantity = remaining
+                    position.market_price = price
+                    position.updated_at = datetime.utcnow()
+
+            tx = TradeTransaction(
+                user_id=user_id,
+                portfolio_id=portfolio_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                execution_mode="paper",
+                status="simulated",
+                approved=approved,
+                manual_confirmation_required=False,
+                notes=notes,
+            )
+            db.add(tx)
+            db.commit()
+            db.refresh(tx)
+            return tx
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 

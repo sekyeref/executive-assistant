@@ -82,6 +82,41 @@ class TradeExecutionService:
             limit_price=limit_price,
         )
 
+        execution_price = None
+        if result.get("status") == "accepted":
+            if normalized_order_type == "limit":
+                execution_price = limit_price
+            else:
+                quote = await self.portfolio_service.market_data_service.get_quote(normalized_symbol)
+                execution_price = float(quote["price"])
+
+            try:
+                tx = self.portfolio_service.apply_paper_trade(
+                    user_id=normalized_user_id,
+                    portfolio_id=portfolio_id,
+                    symbol=normalized_symbol,
+                    side=normalized_side,
+                    quantity=normalized_quantity,
+                    price=execution_price,
+                    approved=approved,
+                    notes=notes,
+                )
+            except ValueError as error:
+                result = {
+                    "status": "blocked",
+                    "reason": str(error),
+                    "execution_mode": normalized_mode,
+                }
+            else:
+                result = {
+                    "status": "ok",
+                    "execution_mode": normalized_mode,
+                    "trade_id": tx.id,
+                    "broker": result.get("broker", "simulated"),
+                    "price": execution_price,
+                    "details": result,
+                }
+
         db = SessionLocal()
         try:
             db.add(TradeAuditLog(
@@ -101,26 +136,5 @@ class TradeExecutionService:
             raise
         finally:
             db.close()
-
-        if result.get("status") == "accepted":
-            tx = self.portfolio_service.add_trade_record(
-                user_id=normalized_user_id,
-                portfolio_id=portfolio_id,
-                symbol=normalized_symbol,
-                side=normalized_side,
-                quantity=normalized_quantity,
-                price=result.get("limit_price") or 0.0,
-                execution_mode=normalized_mode,
-                status="simulated",
-                approved=approved,
-                notes=notes,
-            )
-            return {
-                "status": "ok",
-                "execution_mode": normalized_mode,
-                "trade_id": tx.id,
-                "broker": result.get("broker", "simulated"),
-                "details": result,
-            }
 
         return result
