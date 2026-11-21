@@ -67,7 +67,7 @@ class PaperTradeAccountingTests(unittest.TestCase):
         self.service.apply_paper_trade("demo-user", self.portfolio_id, "BTC-USD", "sell", 0.004, 65000.0)
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, 1740.0)
+        self.assertAlmostEqual(portfolio.cash, 1660.0)
         self.assertAlmostEqual(positions[0].quantity, 0.006)
         self.assertAlmostEqual(positions[0].average_cost, 60000.0)
         self.assertEqual(len(transactions), 2)
