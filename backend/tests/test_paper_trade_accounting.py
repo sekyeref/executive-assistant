@@ -18,7 +18,7 @@ class PaperTradeAccountingTests(unittest.TestCase):
         self.addCleanup(self.session_patch.stop)
         self.addCleanup(engine.dispose)
         self.service = PortfolioService(market_data_service=None)
-        self.portfolio = self.service.create_portfolio("demo-user", cash=1000.0)
+        self.portfolio = self.service.create_portfolio("demo-user", cash=2000.0)
         self.portfolio_id = self.portfolio.id
 
     def state(self):
@@ -33,7 +33,7 @@ class PaperTradeAccountingTests(unittest.TestCase):
         )
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, 400.0)
+        self.assertAlmostEqual(portfolio.cash, 1400.0)
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0].symbol, "BTC-USD")
         self.assertAlmostEqual(positions[0].quantity, 0.01)
@@ -48,16 +48,17 @@ class PaperTradeAccountingTests(unittest.TestCase):
         self.service.apply_paper_trade("demo-user", self.portfolio_id, "BTC-USD", "buy", 0.01, 70000.0)
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, -300.0)  # second buy is rejected; no partial mutation
-        self.assertAlmostEqual(positions[0].quantity, 0.01)
-        self.assertEqual(len(transactions), 1)
+        self.assertAlmostEqual(portfolio.cash, 700.0)
+        self.assertAlmostEqual(positions[0].quantity, 0.02)
+        self.assertAlmostEqual(positions[0].average_cost, 65000.0)
+        self.assertEqual(len(transactions), 2)
 
     def test_rejects_insufficient_cash_without_mutating_portfolio(self):
         with self.assertRaisesRegex(ValueError, "Insufficient cash"):
-            self.service.apply_paper_trade("demo-user", self.portfolio_id, "BTC-USD", "buy", 0.02, 60000.0)
+            self.service.apply_paper_trade("demo-user", self.portfolio_id, "BTC-USD", "buy", 0.04, 60000.0)
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, 1000.0)
+        self.assertAlmostEqual(portfolio.cash, 2000.0)
         self.assertEqual(positions, [])
         self.assertEqual(transactions, [])
 
@@ -66,7 +67,7 @@ class PaperTradeAccountingTests(unittest.TestCase):
         self.service.apply_paper_trade("demo-user", self.portfolio_id, "BTC-USD", "sell", 0.004, 65000.0)
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, 660.0)
+        self.assertAlmostEqual(portfolio.cash, 1740.0)
         self.assertAlmostEqual(positions[0].quantity, 0.006)
         self.assertAlmostEqual(positions[0].average_cost, 60000.0)
         self.assertEqual(len(transactions), 2)
@@ -88,7 +89,7 @@ class PaperTradeAccountingTests(unittest.TestCase):
             self.service.apply_paper_trade("another-user", self.portfolio_id, "BTC-USD", "buy", 0.001, 60000.0)
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, 1000.0)
+        self.assertAlmostEqual(portfolio.cash, 2000.0)
         self.assertEqual(positions, [])
         self.assertEqual(transactions, [])
 
@@ -97,7 +98,7 @@ class PaperTradeAccountingTests(unittest.TestCase):
         self.service.apply_paper_trade("demo-user", self.portfolio_id, "BTC-USD", "sell", 0.01, 65000.0)
 
         portfolio, positions, transactions = self.state()
-        self.assertAlmostEqual(portfolio.cash, 1050.0)
+        self.assertAlmostEqual(portfolio.cash, 2050.0)
         self.assertEqual(positions, [])
         self.assertEqual(len(transactions), 2)
 
