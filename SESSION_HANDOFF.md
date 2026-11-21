@@ -1,36 +1,90 @@
 # Session handoff
 
-## Repository state
-- Repository: `sekyeref/executive-assistant`
-- Working branch: `hardening/dashboard-render-checks`
-- Latest code commit: `f177a070abbbd948ccb19b1898fa310ccdef6a25` — fail closed on live trades until a real broker adapter exists.
-- The backend hardening and dashboard test cleanup are committed on this branch.
+## Status
 
-## Work completed
-- Trade request schema and service validation reject malformed users/symbols, invalid sides/modes, non-finite or non-positive quantities/prices, invalid order types, and limit orders without a price.
-- Trade execution checks portfolio ownership before broker execution.
-- Live execution is blocked because the current broker adapter is simulated.
-- Dashboard tests include DOM cleanup and cover successful rendering, partial failures, and empty states.
+- Paper-trade accounting implementation is committed.
+- Paper-trade accounting tests pass: 16 backend tests passed.
+- Frontend dashboard tests pass: 3 tests passed.
+- Live trading remains blocked; only the simulated broker is available.
+- Backend startup import mismatch was fixed by exporting `Base` from `backend/app/database.py`.
+
+## Current branch and commits
+
+- Branch: `hardening/dashboard-render-checks`
+- Paper-trade accounting: `886b44fe421cace0df0b9dd23849493bd78df52a`
+- Accounting test corrections: `da5afeaed08164239fbb57594156f3aad8de7876`
+- Partial-sale expected cash correction: `00b2f894e388c7edb6b0b12169e8ade8042915ab`
+- SQLAlchemy startup import fix: `96b0eae8f82e09945542f2e04d3f22f37fc5ecaf`
+
+## Paper-trade accounting
+
+The portfolio service now atomically updates, for accepted paper trades:
+
+- portfolio cash;
+- symbol position quantity;
+- weighted average cost on repeated buys;
+- market price on positions;
+- trade transaction history;
+- position removal after a complete sell.
+
+It rejects insufficient cash and insufficient holdings without mutating portfolio state.
 
 ## Verification
-- Before the latest live-trading fail-closed change: backend suite passed (6 tests); frontend suite passed (3 tests).
-- The latest backend change added four execution edge-case tests. **Rerun the backend suite before merge**; results for that latest commit have not yet been provided.
-- Frontend tests were not changed by the latest backend commit.
 
-From the separate worktree used previously, rerun backend tests with:
+Backend:
 
 ```bash
-cd /tmp/ea-backend-tests/backend
+cd ~/executive-assistant/backend
 source .venv/bin/activate
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
 
-Frontend test command:
+Result: `16 tests`, `OK`.
+
+Frontend:
 
 ```bash
-cd /tmp/ea-backend-tests/frontend
+cd ~/executive-assistant/frontend
 npm test
 ```
 
-## Next step
-Rerun backend tests against the latest branch commit, inspect any failures, then review the branch/PR before merging. Do not enable live trading until a real broker adapter and its safeguards are implemented and tested.
+Result: `3 tests`, `1 Test File passed`.
+
+Backend startup:
+
+```bash
+cd ~/executive-assistant/backend
+source .venv/bin/activate
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Verified: Uvicorn started successfully and reached application startup complete.
+
+Frontend startup:
+
+```bash
+cd ~/executive-assistant/frontend
+npm run dev -- --host 0.0.0.0 --port 3000
+```
+
+Open `http://localhost:3000/`.
+
+## Remaining manual checks
+
+1. Keep both backend and frontend processes running.
+2. Confirm the portfolio dashboard loads without backend connection errors.
+3. Record the starting cash and BTC position.
+4. Submit a small paper buy, such as `0.0001 BTC`.
+5. Refresh or wait for dashboard reload and verify:
+   - cash decreases by the executed notional;
+   - BTC quantity increases;
+   - weighted average cost is correct;
+   - trade history contains the simulated trade.
+6. Submit a smaller sell and verify holdings and cash change correctly.
+7. Re-run frontend tests after any UI change.
+
+## Safety
+
+- Do not enable live trading until a real broker adapter exists.
+- Do not use `git clean` on this working tree.
+- Keep `backend/assistant.db`, `frontend/node_modules/`, and `frontend/package-lock.json` as local untracked or ignored files as appropriate.
